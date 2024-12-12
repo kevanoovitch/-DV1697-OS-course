@@ -1,0 +1,19 @@
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c99
+LDFLAGS = -lpthread
+TARGET = fifo_program
+OBJ = fifo.o Task14Test.o
+
+all: $(TARGET)
+
+$(TARGET): $(OBJ)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJ) $(LDFLAGS)
+
+fifo.o: fifo.c fifo.h
+	$(CC) $(CFLAGS) -c fifo.c
+
+Task14Test.o: Task14Test.c fifo.h
+	$(CC) $(CFLAGS) -c Task14Test.c
+
+clean:
+	rm -f $(OBJ) $(TARGET)
