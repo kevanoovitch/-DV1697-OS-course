@@ -30,3 +30,6 @@
 *.exe
 *.out
 *.app
+
+#Labb Specific items
+__MACOSX/
