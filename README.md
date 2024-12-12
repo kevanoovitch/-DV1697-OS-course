@@ -1,2 +1,2 @@
 # -DV1697-OS-course
-For the labs/practial assigments in my operation system course. Both of theese were created by a group of three.
+For the labs/practical assignments in my operating systems course, both of these were created by a group of three.
