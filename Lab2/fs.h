@@ -1,6 +1,7 @@
 #include <iostream>
 #include <cstdint>
 #include "disk.h"
+#include <vector>
 
 #ifndef __FS_H__
 #define __FS_H__
@@ -45,6 +46,8 @@ public:
     int cat(std::string filepath);
     // ls lists the content in the current directory (files and sub-directories)
     int ls();
+    // Returns next fatFree positon, and amount of free blocks
+    std::vector<uint16_t> fatFinder();
 
     // cp <sourcepath> <destpath> makes an exact copy of the file
     // <sourcepath> to a new file <destpath>
