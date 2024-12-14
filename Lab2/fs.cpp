@@ -24,6 +24,21 @@ int myMin(int x, int y)
         return x;
 }
 
+std::string FS::extractFilename(const std::string &filepath)
+{
+    // Find the position of the last backslash or forward slash
+    size_t lastSlashPos = filepath.find_last_of("/\\");
+
+    // If no slash is found, return the original filepath (it's already a filename)
+    if (lastSlashPos == std::string::npos)
+    {
+        return filepath;
+    }
+
+    // Otherwise, extract the substring after the last slash
+    return filepath.substr(lastSlashPos + 1);
+}
+
 // formats the disk, i.e., creates an empty file system
 int FS::format()
 {
@@ -326,9 +341,7 @@ int FS::cat(std::string filepath)
     // follow the linked list untill EOF
     // add to a string/buffer
 
-    int localEOF = 65535;
-
-    while (currentBlock != localEOF)
+    while (currentBlock != FaT_EOF_unint16)
     {
 
         disk.read(currentBlock, blockData);
@@ -360,17 +373,27 @@ int FS::ls()
     // Interpret the block as an array of directory entries
     dir_entry *entries = reinterpret_cast<dir_entry *>(blkBuffer);
 
-    std::cout << "name \t size\n";
+    std::cout << "name \t  type\t size\n";
 
     // Handle for case: empty FS
+
+    // First print all dirs
 
     size_t nrOfEntries = BLOCK_SIZE / sizeof(dir_entry); // Number of entries in the block
 
     for (size_t i = 0; i < nrOfEntries; i++)
     {
-        if (entries[i].first_blk != FAT_FREE)
+        if (entries[i].first_blk != FAT_FREE && entries[i].type == TYPE_DIR)
         {
-            std::cout << entries[i].file_name << "\t" << entries[i].size << " bytes\n";
+            std::cout << entries[i].file_name << "\t" << "dir" << "\t" << "-" << "\n"; // entries[i].size << "\n";
+        }
+    }
+
+    for (size_t i = 0; i < nrOfEntries; i++)
+    {
+        if (entries[i].first_blk != FAT_FREE && entries[i].type == TYPE_FILE)
+        {
+            std::cout << entries[i].file_name << "\t" << "file" << "\t" << entries[i].size << "\n";
         }
     }
 
@@ -410,8 +433,6 @@ int FS::dirSize(uint16_t currenetDir)
 // <sourcepath> to a new file <destpath>
 int FS::cp(std::string sourcepath, std::string destpath)
 {
-    // scenario CP is only called in same dir...
-
     u_int8_t srcBlkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
     u_int8_t dirBlkBuffer[BLOCK_SIZE]; // Buffer for reading directory block
 
@@ -420,8 +441,19 @@ int FS::cp(std::string sourcepath, std::string destpath)
         std::cerr << "Error: failed to read src file in cp()." << std::endl;
         return -1;
     }
+    /* Case where destpath-file already exists*/
 
     dir_entry *entries = (dir_entry *)(srcBlkBuffer);
+
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (strcmp(entries[i].file_name, destpath.c_str()) == 0)
+        {
+            // found the file that destination file already exists
+            std::cerr << "Error: in cp(), Destination file already exists" << std::endl;
+            return -1;
+        }
+    }
 
     // Step 2: find the file in the fat or create tempfile here?
     uint16_t srcChainStart;
@@ -443,7 +475,7 @@ int FS::cp(std::string sourcepath, std::string destpath)
 
     if (!foundFile)
     {
-        std::cerr << "Error: in cp(), couldn't file file" << std::endl;
+        std::cerr << "Error: in cp(), couldn't find file" << std::endl;
         return -1;
     }
 
@@ -524,6 +556,86 @@ int FS::cp(std::string sourcepath, std::string destpath)
 // or moves the file <sourcepath> to the directory <destpath> (if dest is a directory)
 int FS::mv(std::string sourcepath, std::string destpath)
 {
+    //  /etc/usr/f1 /etc/usr/f2
+
+    u_int8_t srcBlkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
+
+    if (disk.read(current_dir, srcBlkBuffer) == -1)
+    {
+        std::cerr << "Error: failed to read src file in mv()." << std::endl;
+        return -1;
+    }
+
+    dir_entry *entries = (dir_entry *)(srcBlkBuffer);
+
+    /* Case wher soruce name is bad */
+    bool foundFile = false;
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (strcmp(entries[i].file_name, sourcepath.c_str()) == 0)
+        {
+            // found the file that destination file already exists
+            foundFile = true;
+            break;
+        }
+    }
+    if (foundFile == false)
+    {
+        /* Couldnt fint source filename */
+        std::cerr << "error in mv(): couldnt find source file" << std::endl;
+        return -1;
+    }
+
+    /* Case where destpath-file already exists*/
+
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (strcmp(entries[i].file_name, destpath.c_str()) == 0)
+        {
+            // found the file that destination file already exists
+            std::cerr << "Error: in mv(), Destination file already exists" << std::endl;
+            return -1;
+        }
+    }
+
+    // Step 2: find the file in the fat or create tempfile here?
+
+    dir_entry *srcFile = nullptr;
+    foundFile = false;
+
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (strcmp(entries[i].file_name, sourcepath.c_str()) == 0)
+        {
+            // found the file
+            srcFile = &entries[i];
+            foundFile = true;
+            break;
+        }
+    }
+
+    if (foundFile == false)
+    {
+        /* couldnt find source file */
+        std::cerr << "Error in mv() couldnt find source file" << std::endl;
+    }
+
+    std::string dstName = extractFilename(destpath);
+
+    // convert string to char[]
+    char charArray[56]; // Ensure it has the same size as file_name in dir_entry
+    for (size_t i = 0; i < dstName.length() && i < sizeof(charArray) - 1; ++i)
+    {
+        charArray[i] = dstName[i];
+    }
+    charArray[dstName.length()] = '\0'; // Null-terminate the array
+
+    // Assign charArray to srcFile.file_name using strncpy
+    strncpy(srcFile->file_name, charArray, sizeof(srcFile->file_name) - 1);
+    srcFile->file_name[sizeof(srcFile->file_name) - 1] = '\0'; // Ensure null-termination
+
+    disk.write(current_dir, srcBlkBuffer);
+
     std::cout << "FS::mv(" << sourcepath << "," << destpath << ")\n";
     return 0;
 }
@@ -531,6 +643,76 @@ int FS::mv(std::string sourcepath, std::string destpath)
 // rm <filepath> removes / deletes the file <filepath>
 int FS::rm(std::string filepath)
 {
+    /*
+        rm <filename>
+        Deletes the file filename, i.e., removes its directory entry and marks the corresponding disk blocks as free.
+    */
+
+    // auto filename = extractFilename(filepath);
+
+    u_int8_t blkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
+
+    dir_entry *entries = (dir_entry *)(blkBuffer);
+
+    if (disk.read(current_dir, blkBuffer) == -1)
+    {
+        std::cerr << "error in rm() couldnt read disk" << std::endl;
+        return -1;
+    }
+
+    bool foundFile = false;
+    dir_entry *file = nullptr;
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (entries[i].first_blk != FAT_FREE)
+        {
+            if (strcmp(entries[i].file_name, filepath.c_str()) == 0)
+            {
+                // found the file that destination file already exists
+                foundFile = true;
+                file = &entries[i];
+                break;
+            }
+        }
+    }
+    if (foundFile == false)
+    {
+        std::cerr << "error in rm() couldnt find file" << std::endl;
+        return -1;
+    }
+
+    uint16_t currentBlk = file->first_blk;
+
+    while (currentBlk != FaT_EOF_unint16)
+    {
+
+        auto temp = currentBlk;       // Save the current block
+        currentBlk = this->fat[temp]; // Move to the next block in the chain
+        this->fat[temp] = FAT_FREE;
+    }
+
+    // clear the args structure
+
+    file->first_blk = FAT_FREE;     // Mark the file's first block as free
+    memset(file->file_name, 0, 56); // Clear the filename
+    file->size = 0;                 // Reset size
+    file->type = 0;                 // Reset type
+    file->access_rights = 0;        // Reset access rights
+
+    if (disk.write(current_dir, blkBuffer) == -1)
+    {
+        std::cerr << "Error: Failed to write to disk in cp()." << std::endl;
+        return -1;
+    }
+
+    uint8_t fatBuffer[BLOCK_SIZE] = {0};
+    memcpy(fatBuffer, this->fat, sizeof(this->fat));
+    if (disk.write(FAT_BLOCK, fatBuffer) == -1)
+    {
+        std::cerr << "Error: Failed to write FAT in cp()." << std::endl;
+        return -1;
+    }
+
     std::cout << "FS::rm(" << filepath << ")\n";
     return 0;
 }
@@ -539,6 +721,111 @@ int FS::rm(std::string filepath)
 // the end of file <filepath2>. The file <filepath1> is unchanged.
 int FS::append(std::string filepath1, std::string filepath2)
 {
+    // link the chains
+
+    u_int8_t blkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
+    dir_entry *entries = (dir_entry *)(blkBuffer);
+    if (disk.read(current_dir, blkBuffer) == -1)
+    {
+        std::cerr << "error in rm() couldnt read disk" << std::endl;
+        return -1;
+    }
+
+    dir_entry *srcFile = nullptr;
+    dir_entry *dstFile = nullptr;
+    auto foundfileSrc = false;
+    auto foundfileDst = false;
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (entries[i].first_blk != FAT_FREE)
+        {
+            if (strcmp(entries[i].file_name, filepath1.c_str()) == 0)
+            {
+                // found the file that destination file already exists
+                foundfileSrc = true;
+                srcFile = &entries[i];
+            }
+            if (strcmp(entries[i].file_name, filepath2.c_str()) == 0)
+            {
+                // found the file that destination file already exists
+                foundfileDst = true;
+                dstFile = &entries[i];
+            }
+            if (foundfileDst == true && foundfileSrc == true)
+            {
+                /* found needed files */
+                break;
+            }
+        }
+    }
+    if (foundfileDst != true)
+    {
+        std::cerr << "error in append: didnt find file2" << std::endl;
+    }
+    else if (foundfileSrc != true)
+    {
+        std::cerr << "error in append: didnt find file1" << std::endl;
+    }
+
+    // read data into temp container
+    uint16_t srcCurrentBlock = srcFile->first_blk;
+    u_int8_t dataBuffer[BLOCK_SIZE]; // Somewhere to store what we read
+
+    while (srcCurrentBlock != FaT_EOF_unint16)
+    {
+        disk.read(srcCurrentBlock, dataBuffer);
+        srcCurrentBlock = this->fat[srcCurrentBlock];
+    }
+
+    // dataBuffer = hej heja hejare hejast
+    //  hej heja hejare hejast / blocks = st block
+    double temp = (double)srcFile->size / BLOCK_SIZE;
+    int nrNeededBlocks = std::ceil(temp);
+
+    std::vector<uint16_t> freeblocks = fatFinder();
+
+    if (freeblocks.size() < nrNeededBlocks)
+    {
+        std::cerr << "Error in append(): not enough free blocks" << std::endl;
+        return -1;
+    }
+
+    // read/Write to update size
+    // u_int8_t aBuffer[BLOCK_SIZE]; // Somewhere to store what we read
+    // disk.read(current_dir, aBuffer);
+    // disk.write(ROOT_BLOCK, aBuffer);
+
+    // find last block of dst/file2
+    uint16_t dstCurrentBlk = dstFile->first_blk;
+    uint16_t lastBlock;
+
+    srcCurrentBlock = srcFile->first_blk;
+
+    while (dstCurrentBlk != FaT_EOF_unint16)
+    {
+
+        lastBlock = dstCurrentBlk;
+        dstCurrentBlk = this->fat[dstCurrentBlk];
+    }
+
+    // append the data to dst/file2
+    for (int i = 0; i < nrNeededBlocks; i++)
+    {
+        // updating FAT
+        uint8_t buffer[BLOCK_SIZE] = {0};
+        this->fat[lastBlock] = freeblocks[i];
+        lastBlock = freeblocks[i];
+
+        // Updating DATA
+        disk.read(srcCurrentBlock, buffer);
+        disk.write(freeblocks[i], buffer);
+    }
+    this->fat[lastBlock] = FaT_EOF_unint16;
+
+    dstFile->size += srcFile->size;
+
+    disk.write(ROOT_BLOCK, blkBuffer);
+
     std::cout << "FS::append(" << filepath1 << "," << filepath2 << ")\n";
     return 0;
 }
@@ -547,7 +834,54 @@ int FS::append(std::string filepath1, std::string filepath2)
 // in the current directory
 int FS::mkdir(std::string dirpath)
 {
-    std::cout << "FS::mkdir(" << dirpath << ")\n";
+    u_int8_t blkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
+    dir_entry *entries = (dir_entry *)(blkBuffer);
+    if (disk.read(current_dir, blkBuffer) == -1)
+    {
+        std::cerr << "error in mkdir() couldnt read disk" << std::endl;
+        return -1;
+    }
+
+    /* Hitta plats i FAT*/
+    auto firstFree = fatFinder()[0];
+    auto secondFree = fatFinder()[1];
+
+    /* build FAT*/
+    /*skriv metadata  */
+
+    dir_entry entry;
+
+    strncpy(entries[firstFree].file_name, dirpath.c_str(), sizeof(entries[firstFree].file_name) - 1);
+    entries[firstFree].file_name[sizeof(entries[firstFree].file_name) - 1] = '\0';
+    entries[firstFree].size = 1;
+    entries[firstFree].first_blk = firstFree;
+    entries[firstFree].type = TYPE_DIR;
+    entries[firstFree].access_rights = READ | WRITE;
+
+    // Making .. entry
+
+    std::string x = "..";
+    strncpy(entries[secondFree].file_name, x.c_str(), sizeof(entries[secondFree].file_name) - 1);
+    entries[secondFree].file_name[sizeof(entries[secondFree].file_name) - 1] = '\0';
+    entries[secondFree].size = 0;
+    entries[secondFree].first_blk = current_dir;
+    entries[secondFree].type = TYPE_DIR;
+    entries[secondFree].access_rights = READ | WRITE;
+
+    /*skriv all till disk */
+    disk.write(current_dir, blkBuffer);
+
+    // Write the updated FAT to the disk
+    uint8_t fatBuffer[BLOCK_SIZE] = {0};
+    memcpy(fatBuffer, this->fat, sizeof(this->fat));
+    if (disk.write(FAT_BLOCK, fatBuffer) == -1)
+    {
+        std::cerr << "Error: Failed to write FAT in cp()." << std::endl;
+        return -1;
+    }
+
+    std::cout
+        << "FS::mkdir(" << dirpath << ")\n";
     return 0;
 }
 

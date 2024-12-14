@@ -10,6 +10,7 @@
 #define FAT_BLOCK 1
 #define FAT_FREE 0
 #define FAT_EOF -1
+#define FaT_EOF_unint16 65535
 
 #define TYPE_FILE 0
 #define TYPE_DIR 1
@@ -46,8 +47,9 @@ public:
     int cat(std::string filepath);
     // ls lists the content in the current directory (files and sub-directories)
     int ls();
-    // Returns next fatFree positon, and amount of free blocks
+    // Returns an vector of the next free blocks positions
     std::vector<uint16_t> fatFinder();
+    std::string extractFilename(const std::string &filepath);
 
     // cp <sourcepath> <destpath> makes an exact copy of the file
     // <sourcepath> to a new file <destpath>
