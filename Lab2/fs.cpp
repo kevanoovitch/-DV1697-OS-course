@@ -634,6 +634,7 @@ int FS::cp(std::string sourcepath, std::string destpath)
 // or moves the file <sourcepath> to the directory <destpath> (if dest is a directory)
 int FS::mv(std::string sourcepath, std::string destpath)
 {
+
     u_int8_t srcBlkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
 
     if (disk.read(current_dir, srcBlkBuffer) == -1)
@@ -644,7 +645,7 @@ int FS::mv(std::string sourcepath, std::string destpath)
 
     dir_entry *entries = (dir_entry *)(srcBlkBuffer);
 
-    /* Case wher soruce name is bad */
+    /* Case where source name is bad */
     bool foundFile = false;
     dir_entry *sourcePtr = nullptr;
     for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
@@ -664,11 +665,29 @@ int FS::mv(std::string sourcepath, std::string destpath)
         return -1;
     }
 
+    // Step 2: find the file in the fat or create tempfile here?
+
+    /*
+
+    */
+    dir_entry *destinationPtr = nullptr;
+    bool foundDst = false;
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (strcmp(entries[i].file_name, destpath.c_str()) == 0)
+        {
+            // found the file
+            destinationPtr = &entries[i];
+
+            foundDst = true;
+            break;
+        }
+    }
     /* Case where destpath-file already exists*/
 
     for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
     {
-        if (strcmp(entries[i].file_name, destpath.c_str()) == 0 && sourcePtr->type != TYPE_DIR)
+        if (strcmp(entries[i].file_name, destpath.c_str()) == 0 && destinationPtr->type != TYPE_DIR)
         {
             // found the file that destination file already exists
             std::cerr << "Error: in mv(), Destination file already exists" << std::endl;
@@ -676,43 +695,78 @@ int FS::mv(std::string sourcepath, std::string destpath)
         }
     }
 
-    // Step 2: find the file in the fat or create tempfile here?
-
-    dir_entry *srcFile = nullptr;
-    foundFile = false;
-
-    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    if (destinationPtr && destinationPtr->type != TYPE_DIR)
     {
-        if (strcmp(entries[i].file_name, sourcepath.c_str()) == 0)
+        std::cerr << "Error: Destination file already exists in mv()." << std::endl;
+        return -1;
+    }
+    if (destinationPtr && destinationPtr->type == TYPE_DIR)
+    {
+
+        // Read root block for source entry //Entries is source
+
+        // Read dst block to add source entry
+
+        u_int8_t dstBlkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
+        disk.read(destinationPtr->first_blk, dstBlkBuffer);
+        dir_entry *dstEntries = (dir_entry *)(dstBlkBuffer);
+
+        dir_entry *dstEntryPtr = nullptr;
+        for (int i = 1; i < BLOCK_SIZE / sizeof(dir_entry); i++)
         {
-            // found the file
-            srcFile = &entries[i];
-            foundFile = true;
-            break;
+            // Look for room in destination DIR
+            if (dstEntries[i].first_blk == FAT_FREE)
+            {
+                // found a spot
+                dstEntryPtr = &dstEntries[i];
+                break;
+            }
         }
-    }
+        if (dstEntryPtr == nullptr)
+        {
+            std::cerr << "Error in mv(), when target was DIR there was no room in destination for a new file" << std::endl;
+            return -1;
+        }
 
-    if (foundFile == false)
+        strncpy(dstEntryPtr->file_name, sourcePtr->file_name, sizeof(sourcePtr->file_name) - 1);
+        dstEntryPtr->file_name[sizeof(sourcePtr->file_name) - 1] = '\0'; // Ensure null-termination
+        dstEntryPtr->first_blk = sourcePtr->first_blk;
+        dstEntryPtr->size = sourcePtr->size;
+        dstEntryPtr->type = sourcePtr->type;
+        dstEntryPtr->access_rights = sourcePtr->access_rights;
+
+        // write both changes
+
+        disk.write(destinationPtr->first_blk, dstBlkBuffer);
+
+        // remove old file entry from src then write?
+        memset(sourcePtr->file_name, 0, sizeof(sourcePtr->file_name));
+        sourcePtr->first_blk = 0;
+        sourcePtr->size = 0;
+        sourcePtr->type = 0;
+        sourcePtr->access_rights = READ | WRITE;
+
+        disk.write(current_dir, srcBlkBuffer);
+    }
+    else
     {
-        /* couldnt find source file */
-        std::cerr << "Error in mv() couldnt find source file" << std::endl;
+        std::string dstName = extractFilename(destpath);
+
+        // convert string to char[]
+        char charArray[56]; // Ensure it has the same size as file_name in dir_entry
+        for (size_t i = 0; i < dstName.length() && i < sizeof(charArray) - 1; ++i)
+        {
+            charArray[i] = dstName[i];
+        }
+
+        charArray[dstName.length()] = '\0'; // Null-terminate the array
+
+        // Assign charArray to srcFile.file_name using strncpy (RENAME)
+        strncpy(sourcePtr->file_name, charArray, sizeof(sourcePtr->file_name) - 1);
+        sourcePtr->file_name[sizeof(sourcePtr->file_name) - 1] = '\0'; // Ensure null-termination
+
+        disk.write(current_dir, srcBlkBuffer);
     }
-
-    std::string dstName = extractFilename(destpath);
-
-    // convert string to char[]
-    char charArray[56]; // Ensure it has the same size as file_name in dir_entry
-    for (size_t i = 0; i < dstName.length() && i < sizeof(charArray) - 1; ++i)
-    {
-        charArray[i] = dstName[i];
-    }
-    charArray[dstName.length()] = '\0'; // Null-terminate the array
-
-    // Assign charArray to srcFile.file_name using strncpy
-    strncpy(srcFile->file_name, charArray, sizeof(srcFile->file_name) - 1);
-    srcFile->file_name[sizeof(srcFile->file_name) - 1] = '\0'; // Ensure null-termination
-
-    disk.write(current_dir, srcBlkBuffer);
 
     std::cout << "FS::mv(" << sourcepath << "," << destpath << ")\n";
     return 0;
@@ -721,12 +775,6 @@ int FS::mv(std::string sourcepath, std::string destpath)
 // rm <filepath> removes / deletes the file <filepath>
 int FS::rm(std::string filepath)
 {
-    /*
-        rm <filename>
-        Deletes the file filename, i.e., removes its directory entry and marks the corresponding disk blocks as free.
-    */
-
-    // auto filename = extractFilename(filepath);
 
     u_int8_t blkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
 
@@ -839,10 +887,12 @@ int FS::append(std::string filepath1, std::string filepath2)
     if (foundfileDst != true)
     {
         std::cerr << "error in append: didnt find file2" << std::endl;
+        return -1;
     }
     else if (foundfileSrc != true)
     {
         std::cerr << "error in append: didnt find file1" << std::endl;
+        return -1;
     }
 
     // read data into temp container
@@ -1104,7 +1154,7 @@ int FS::cd(std::string dirpath)
 
 int FS::pwd()
 {
-    std::cout << "PWD: " << current_dir << std::endl;
+
     std::string path = "";
     uint16_t travDir = current_dir; // Start from the current directory
 
