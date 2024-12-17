@@ -224,22 +224,11 @@ void Shell::run()
         std::cout << "Error: cp(" << arg1 << "," << arg2 << ") failed, error code " << ret_val << std::endl;
     arg1 = "d1";
 
-    // Debug
-    /*
-    std::cout << "Vår LS " << std::endl;
-    filesystem.ls();
-    std::cout << "----- " << std::endl;
-    */
+    filesystem.cp("f2", "d1");
+
     ret_val = filesystem.cd(arg1);
     if (ret_val)
         std::cout << "Error: cd " << arg1 << " failed, error code " << ret_val << std::endl;
-
-    // Debug
-    /*
-    std::cout << "Vår LS " << std::endl;
-    filesystem.ls();
-    std::cout << "----- " << std::endl;
-    */
 
     ret_val = filesystem.pwd();
     if (ret_val)
@@ -255,7 +244,7 @@ void Shell::run()
     if (ret_val)
         std::cout << "Error: pwd failed, error code " << ret_val << std::endl;
     PRINTDIV2;
-    /*
+
     std::cout << "Checking that mv works with a directory as destination" << std::endl;
     std::cout << "Testing mv(f2,d1)..." << std::endl;
     std::cout << "Expected output:" << std::endl;
@@ -305,7 +294,6 @@ void Shell::run()
     if (ret_val)
         std::cout << "Error: ls failed, error code " << ret_val << std::endl;
     PRINTDIV2;
-    */
 
     std::cout << "... Task 3 done" << std::endl;
     PRINTDIV;
