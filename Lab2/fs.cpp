@@ -391,9 +391,9 @@ int FS::ls()
 
     size_t nrOfEntries = BLOCK_SIZE / sizeof(dir_entry); // Number of entries in the block
 
-    for (size_t i = 0; i < nrOfEntries; i++)
+    for (size_t i = 1; i < nrOfEntries; i++)
     {
-        if (/*entries[i].first_blk != FAT_FREE &&*/ entries[i].type == TYPE_DIR)
+        if (entries[i].first_blk != FAT_FREE && entries[i].type == TYPE_DIR)
         {
             std::cout << entries[i].file_name << "\t" << "dir" << "\t" << "-" << "\n"; // entries[i].size << "\n";
         }
@@ -552,6 +552,7 @@ int FS::cp(std::string sourcepath, std::string destpath)
         bool foundFreeEntry = false;
         for (int i = 1; i < BLOCK_SIZE / sizeof(dir_entry); i++)
         {
+
             if (dstEntries[i].first_blk == FAT_FREE)
             {
                 // Write new file entry here
@@ -807,6 +808,35 @@ int FS::rm(std::string filepath)
         return -1;
     }
 
+    if (file->type == TYPE_DIR)
+    {
+        // what we want to remove is a dir
+
+        u_int8_t removeBuffer[BLOCK_SIZE]; // Somewhere to store what we read
+        disk.read(file->first_blk, removeBuffer);
+        dir_entry *removeEntries = (dir_entry *)(removeBuffer);
+
+        for (int i = 1; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+        {
+            if (removeEntries->first_blk != FAT_FREE)
+            {
+                std::cerr << "Error in rm(), tried to remove a dir but it wasn't empty!" << std::endl;
+                return -1;
+            }
+        }
+
+        // the dir is empty empty the dir entry
+        file->first_blk = FAT_FREE;
+        memset(file->file_name, 0, sizeof(file->file_name));
+        file->first_blk = 0;
+        file->size = 0;
+        file->access_rights = READ | WRITE;
+
+        this->fat[file->first_blk] = FAT_FREE;
+        disk.write(current_dir, blkBuffer);
+        return 0;
+    }
+
     uint16_t currentBlk = file->first_blk;
 
     while (currentBlk != FaT_EOF_unint16)
@@ -960,7 +990,7 @@ int FS::append(std::string filepath1, std::string filepath2)
 
 // mkdir <dirpath> creates a new sub-directory with the name <dirpath>
 // in the current directory
-int FS::mkdir(std::string dirpath)
+int FS::mkdir(std::string dirpath) // dir1
 {
     // Read current directory block
     u_int8_t blkBuffer[BLOCK_SIZE];
@@ -990,6 +1020,7 @@ int FS::mkdir(std::string dirpath)
     {
         if (entries[i].first_blk == FAT_FREE)
         {
+
             freeSpot = &entries[i];
             break;
         }
@@ -1106,8 +1137,6 @@ int FS::cd(std::string dirpath)
         return -1;
     }
 
-    // std::cout << "Found:" << paramEntry->file_name << std::endl;
-    // std::cout << "Type:" << (int)paramEntry->type << std::endl;
     //  Handle case where a file is in param
     if (paramEntry->type == TYPE_FILE)
     {
@@ -1123,30 +1152,9 @@ int FS::cd(std::string dirpath)
 
         current_dir = paramEntry->first_blk;
         return 0; // Return early to avoid processing further
-
-        // write return
-        /*
-        if (disk.write(current_dir, blkBuffer) == -1)
-        {
-            std::cerr << "failed disk write in cd()" << std::endl;
-            return 0;
-        };
-        */
     }
 
-    /* Find the dir that matches param name */
-    // std::cout << "OLD current dir" << current_dir << std::endl; // DEBUG
     current_dir = paramEntry->first_blk;
-
-    // std::cout << "New current dir" << current_dir << std::endl; // DEBUG
-
-    // write return
-    /*
-    if (disk.write(current_dir, blkBuffer) == -1)
-    {
-        std::cerr << "failed disk write in cd()" << std::endl;
-    };
-    */
 
     std::cout << "FS::cd(" << dirpath << ")\n";
     return 0;
