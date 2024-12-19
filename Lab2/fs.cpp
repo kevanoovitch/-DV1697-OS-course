@@ -26,6 +26,15 @@ int myMin(int x, int y)
         return x;
 }
 
+std::string accessRightsToString(uint8_t access_rights)
+{
+    std::string result = "";
+    result += (access_rights & READ) ? "r" : "-";    // Check READ bit
+    result += (access_rights & WRITE) ? "w" : "-";   // Check WRITE bit
+    result += (access_rights & EXECUTE) ? "x" : "-"; // Check EXECUTE bit
+    return result;
+}
+
 std::vector<std::string> parsePath(const std::string &path)
 {
     std::vector<std::string> components;
@@ -378,6 +387,12 @@ int FS::cat(std::string filepath)
         std::cerr << "Error: in cat(), didnt find file" << std::endl;
         return -1;
     }
+    if (file.access_rights == 0x01 || file.access_rights == 0x02 || file.access_rights == 0x03)
+    {
+        std::cerr << "Error: in cat(), not enough access" << std::endl;
+        return -1;
+    }
+
     if (filePtr->type == TYPE_DIR)
     {
         std::cerr << "Error: in cat(), param is directory" << std::endl;
@@ -425,7 +440,7 @@ int FS::ls()
     // Interpret the block as an array of directory entries
     dir_entry *entries = reinterpret_cast<dir_entry *>(blkBuffer);
 
-    std::cout << "name \t  type\t size\n";
+    std::cout << "name \t  type\t accessrights\t size\n";
 
     // Handle for case: empty FS
 
@@ -435,9 +450,13 @@ int FS::ls()
 
     for (size_t i = 0; i < nrOfEntries; i++)
     {
-        if (/*entries[i].first_blk != FAT_FREE &&*/ entries[i].type == TYPE_DIR /*&& strcmp(entries[0].file_name, "..") != 0*/)
+        if (strcmp(entries[i].file_name, "..") != 0 && entries[i].first_blk != FAT_FREE && entries[i].type == TYPE_DIR)
         {
-            std::cout << entries[i].file_name << "\t" << "dir" << "\t" << "-" << "\n"; // entries[i].size << "\n";
+            // Print directory details if it's not ".."
+            std::cout << entries[i].file_name << "\t"
+                      << "dir" << "\t"
+                      << accessRightsToString(entries[i].access_rights) << "\t"
+                      << "-" << "\n"; // entries[i].size << "\n";
         }
     }
 
@@ -445,7 +464,7 @@ int FS::ls()
     {
         if (entries[i].first_blk != FAT_FREE && entries[i].type == TYPE_FILE)
         {
-            std::cout << entries[i].file_name << "\t" << "file" << "\t" << entries[i].size << "\n";
+            std::cout << entries[i].file_name << "\t" << "file" << "\t" << accessRightsToString(entries[i].access_rights) << "\t" << entries[i].size << "\n";
         }
     }
 
@@ -1220,6 +1239,17 @@ int FS::append(std::string filepath1, std::string filepath2)
         return -1;
     }
 
+    if (srcFile->access_rights == 0x01 || srcFile->access_rights == 0x02 || srcFile->access_rights == (0x01 | 0x02))
+    {
+        std::cerr << "error in append: not enough rights for source file" << std::endl;
+        return -1;
+    }
+    else if (dstFile->access_rights == EXECUTE || dstFile->access_rights == READ || dstFile->access_rights == (0x04 | 0x01))
+    {
+        std::cerr << "error in append: not enough rights for destination file" << std::endl;
+        return -1;
+    }
+
     // read data into temp container
     uint16_t srcCurrentBlock = srcFile->first_blk;
     u_int8_t dataBuffer[BLOCK_SIZE]; // Somewhere to store what we read
@@ -1256,7 +1286,6 @@ int FS::append(std::string filepath1, std::string filepath2)
 
     while (dstCurrentBlk != FaT_EOF_unint16)
     {
-
         lastBlock = dstCurrentBlk;
         dstCurrentBlk = this->fat[dstCurrentBlk];
     }
@@ -1545,7 +1574,7 @@ int FS::cd(std::string dirpath)
 
     current_dir = paramEntry->first_blk;
 
-    std::cout << "FS::cd(" << dirpath << ")\n";
+    // std::cout << "FS::cd(" << dirpath << ")\n";
     return 0;
 }
 
@@ -1624,6 +1653,75 @@ int FS::pwd()
 // file <filepath> to <accessrights>.
 int FS::chmod(std::string accessrights, std::string filepath)
 {
+    // 0x04 = read 0x02 = write, EXE = 0x01
+
+    // open up the entry for filepath
+    // read current block
+
+    uint8_t blkBuffer[BLOCK_SIZE];
+    if (disk.read(current_dir, blkBuffer) == -1)
+    {
+        std::cerr << "error in chmod(), on read " << std::endl;
+    };
+
+    dir_entry *entries = reinterpret_cast<dir_entry *>(blkBuffer);
+
+    dir_entry *entryPtr = nullptr;
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (strcmp(entries[i].file_name, filepath.c_str()) == 0)
+        {
+            entryPtr = &entries[i];
+            break;
+        }
+    }
+    if (entryPtr == nullptr)
+    {
+        std::cerr << "error in chmod()" << std::endl;
+        return -1;
+    }
+
+    // find the file based on param
+
+    if (accessrights == "1")
+    {
+        entryPtr->access_rights = 0x01; // EXECUTE
+    }
+    else if (accessrights == "2")
+    {
+        entryPtr->access_rights = 0x02; // WRITE
+    }
+    else if (accessrights == "3")
+    {
+        entryPtr->access_rights = 0x01 | 0x02; // EXECUTE + WRITE
+    }
+    else if (accessrights == "4")
+    {
+        entryPtr->access_rights = 0x04; // READ
+    }
+    else if (accessrights == "5")
+    {
+        entryPtr->access_rights = 0x04 | 0x01; // READ + EXECUTE
+    }
+    else if (accessrights == "6")
+    {
+        entryPtr->access_rights = 0x04 | 0x02; // READ + WRITE
+    }
+    else if (accessrights == "7")
+    {
+        entryPtr->access_rights = 0x04 | 0x02 | 0x01; // READ + WRITE + EXECUTE
+    }
+    else
+    {
+        std::cerr << "Error: Invalid access rights in chmod()." << std::endl;
+        return -1;
+    }
+
+    if (disk.write(current_dir, blkBuffer) == -1)
+    {
+        std::cerr << "error in chmod(), on write " << std::endl;
+    };
+
     std::cout << "FS::chmod(" << accessrights << "," << filepath << ")\n";
     return 0;
 }
