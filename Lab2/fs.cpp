@@ -177,6 +177,14 @@ int FS::create(std::string filepath)
     // Interpret the block as an array of directory entries
     dir_entry *entries = reinterpret_cast<dir_entry *>(blkBuffer);
 
+    // check access rights
+
+    if (entries[0].access_rights == 0x04 || entries[0].access_rights == 0x05 || entries[0].access_rights == 0x01) // check it has not write rights
+    {
+        std::cerr << "Error: in create(), not enough access" << std::endl;
+        return -1;
+    }
+
     for (int i = 2; i < BLOCK_SIZE / sizeof(dir_entry); i++)
     {
         if (entries[i].first_blk != FAT_FREE)
@@ -539,6 +547,13 @@ int FS::cp(std::string sourcepath, std::string destpath)
             std::cerr << "couldnt find source file when working with paths in cp()" << std::endl;
         }
 
+        if (sourcePtrPath->access_rights == 0x01 || sourcePtrPath->access_rights == 0x02 || sourcePtrPath->access_rights == 0x03)
+        {
+
+            std::cerr << "error in cp() no read rights for sourcepath" << std::endl;
+            return -1;
+        }
+
         // disk.read(current_dir, srcBlkPath);
 
         for (size_t i = 0; i < components.size(); ++i) // in order to land one over target dir
@@ -665,10 +680,18 @@ int FS::cp(std::string sourcepath, std::string destpath)
     dir_entry *dstEntries;
     if (dirFlag == true)
     {
+
         // Destination is a directory, so place the file inside that directory
         if (disk.read(dstDir->first_blk, dstBlkBuffer) == -1)
         {
             std::cerr << "Error in cp(): failed to read destination directory block." << std::endl;
+            return -1;
+        }
+
+        if (dstDir->access_rights == 0x04 || dstDir->access_rights == 0x01 || dstDir->access_rights == 0x05)
+        {
+
+            std::cerr << "error in cp() no write rights for destination path" << std::endl;
             return -1;
         }
 
@@ -843,6 +866,13 @@ int FS::mv(std::string sourcepath, std::string destpath)
             std::cerr << "couldnt find source file when working with paths in mv()" << std::endl;
         }
 
+        if (sourcePtrPath->access_rights == 0x01 || sourcePtrPath->access_rights == 0x02 || sourcePtrPath->access_rights == 0x03)
+        {
+
+            std::cerr << "error in mv() no read rights for sourcepath" << std::endl;
+            return -1;
+        }
+
         // disk.read(current_dir, srcBlkPath);
 
         for (size_t i = 0; i < components.size(); ++i) // in order to land one over target dir
@@ -977,6 +1007,13 @@ int FS::mv(std::string sourcepath, std::string destpath)
         if (dstEntryPtr == nullptr)
         {
             std::cerr << "Error in mv(), when target was DIR there was no room in destination for a new file" << std::endl;
+            return -1;
+        }
+
+        if (dstEntryPtr->access_rights == 0x04 || dstEntryPtr->access_rights == 0x01 || dstEntryPtr->access_rights == 0x05)
+        {
+
+            std::cerr << "error in mv() no write rights for destination path" << std::endl;
             return -1;
         }
 
@@ -1116,9 +1153,16 @@ int FS::rm(std::string filepath)
             }
         }
     }
+
     if (foundFile == false)
     {
         std::cerr << "error in rm() couldnt find file" << std::endl;
+        return -1;
+    }
+
+    if (entries[0].access_rights == 0x07) // check it has full rights i.e read/write/execute rights
+    {
+        std::cerr << "Error: in rm(), not enough access" << std::endl;
         return -1;
     }
 
@@ -1187,7 +1231,7 @@ int FS::rm(std::string filepath)
     return 0;
 }
 
-// append <filepath1> <filepath2> appends the contents of file <filepath1> to
+// append <filepath1> <filepath2> <append>s the contents of file <filepath1> to
 // the end of file <filepath2>. The file <filepath1> is unchanged.
 int FS::append(std::string filepath1, std::string filepath2)
 {
@@ -1428,6 +1472,14 @@ int FS::mkdir(std::string dirpath)
         return -1;
     }
     uint16_t firstFree = freeBlks[0];
+
+    // acessrights
+    if (entries[0].access_rights == 0x04 || entries[0].access_rights == 0x01 || entries[0].access_rights == 0x05)
+    {
+        /* Needs write */
+        std::cerr << "error in mkdir(), no write-access in destination dir" << std::endl;
+        return -1;
+    }
 
     // Mark the directory block as EOF in FAT
     this->fat[firstFree] = FAT_EOF;
