@@ -50,6 +50,11 @@ public:
     // Returns an vector of the next free blocks positions
     std::vector<uint16_t> fatFinder();
     std::string extractFilename(const std::string &filepath);
+    // will take a absolutpath and move current dir to the dir over destination
+    int traversal(std::string absolutePath);                                                        // helper function
+    std::pair<uint16_t, uint16_t> absolutePathHelper(std::string sourcepath, std::string destpath); // helper function
+    int dotHelper(std::string path);                                                                // helper function
+    void entryPointer(dir_entry *&ptr, uint16_t block, std::string compareTo);
 
     // cp <sourcepath> <destpath> makes an exact copy of the file
     // <sourcepath> to a new file <destpath>
@@ -57,6 +62,7 @@ public:
     // mv <sourcepath> <destpath> renames the file <sourcepath> to the name <destpath>,
     // or moves the file <sourcepath> to the directory <destpath> (if dest is a directory)
     int mv(std::string sourcepath, std::string destpath);
+
     // rm <filepath> removes / deletes the file <filepath>
     int rm(std::string filepath);
     // append <filepath1> <filepath2> appends the contents of file <filepath1> to

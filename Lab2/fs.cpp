@@ -42,19 +42,11 @@ std::vector<std::string> parsePath(const std::string &path)
     std::string part;
     while (std::getline(ss, part, '/'))
     {
-        /*
-        if (part == ".." && !components.empty())
-        {
-            components.pop_back(); // Navigate to the parent directory
 
-        }
-        */
         if (!part.empty() && part != ".")
         {
             components.push_back(part);
         }
-
-        // components.push_back(part);
     }
 
     return components;
@@ -121,7 +113,6 @@ int FS::format()
 
     fat[ROOT_BLOCK] = FAT_EOF;
 
-    std::cout << "FS::format()\n";
     return 0;
 }
 
@@ -274,7 +265,6 @@ int FS::create(std::string filepath)
     // - Write each chunk of data to the corresponding block on the disk using `Disk::write`.
 
     size_t fileSize = fileData.size();
-    // int chunks = (fileSize + BLOCK_SIZE - 1) / BLOCK_SIZE; not used?
 
     uint8_t tempBuffer[BLOCK_SIZE] = {0};
 
@@ -826,91 +816,43 @@ int FS::cp(std::string sourcepath, std::string destpath)
         current_dir = startDir;
     }
 
-    std::cout << "FS::cp(" << sourcepath << "," << destpath << ")\n";
     return 0;
 }
 
 // mv <sourcepath> <destpath> renames the file <sourcepath> to the name <destpath>,
 // or moves the file <sourcepath> to the directory <destpath> (if dest is a directory)
+
 int FS::mv(std::string sourcepath, std::string destpath)
 {
-    auto startDir = current_dir;
-
     dir_entry *dstEntryPtr = nullptr;
     dir_entry *destinationPtr = nullptr;
-    u_int8_t afBlkBuffer[BLOCK_SIZE]; // Somewhere to store what we read after we have traversed if we traversed
-    u_int8_t srcBlkPath[BLOCK_SIZE];  // Somewhere to store what we read
+
+    u_int8_t dstBlkBuffer[BLOCK_SIZE];
+    u_int8_t srcBlkBuffer[BLOCK_SIZE];
     dir_entry *sourcePtrPath = nullptr;
-    bool PathFlag = false;
+    bool renameMove = false;
+
     // only traverse if there is a / in param
 
-    if (destpath.find('/') != std::string::npos)
+    auto result = absolutePathHelper(sourcepath, destpath);
+    int srcBlock = result.first;
+    int dstBlock = result.second;
+
+    /* Handle if any of the argument is ..*/
+
+    if (destpath == "..")
     {
-
-        std::vector<std::string> components = parsePath(destpath);
-
-        dir_entry *srcEntriesPath = (dir_entry *)(srcBlkPath);
-        disk.read(current_dir, srcBlkPath);
-        for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
-        {
-            if (strcmp(srcEntriesPath[i].file_name, sourcepath.c_str()) == 0)
-            {
-                // found the file that destination file already exists
-                sourcePtrPath = &srcEntriesPath[i];
-                PathFlag = true;
-                break;
-            }
-        }
-        if (!sourcePtrPath)
-        {
-            std::cerr << "couldnt find source file when working with paths in mv()" << std::endl;
-        }
-
-        if (sourcePtrPath->access_rights == 0x01 || sourcePtrPath->access_rights == 0x02 || sourcePtrPath->access_rights == 0x03)
-        {
-
-            std::cerr << "error in mv() no read rights for sourcepath" << std::endl;
-            return -1;
-        }
-
-        // disk.read(current_dir, srcBlkPath);
-
-        for (size_t i = 0; i < components.size(); ++i) // in order to land one over target dir
-        {
-            // const std::string &dirName = components[i];
-
-            while (current_dir != 0)
-            {
-                if (cd("..") == -1)
-                {
-                    std::cerr << "Error: Could not navigate to the root directory." << std::endl;
-                    return -1;
-                }
-            }
-
-            if (cd(components[i]) == -1)
-            {
-                std::cerr << "error in cp()" << std::endl;
-            }
-        }
-
-        destpath = extractLastPart(destpath);
+        dstBlock = dotHelper(destpath);
     }
 
-    u_int8_t srcBlkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
-    auto readFrom = -1;
-    auto readFromDst = -1;
-    if (PathFlag == true)
+    // make sure we are not doing a renameMove
+
+    if (srcBlock == dstBlock && srcBlock == current_dir)
     {
-        readFrom = startDir;
-        readFromDst = current_dir;
-    }
-    else
-    {
-        readFrom = current_dir;
+        renameMove = true;
     }
 
-    if (disk.read(readFrom, srcBlkBuffer) == -1)
+    if (disk.read(srcBlock, srcBlkBuffer) == -1)
     {
         std::cerr << "Error: failed to read src file in mv()." << std::endl;
         return -1;
@@ -918,7 +860,6 @@ int FS::mv(std::string sourcepath, std::string destpath)
 
     dir_entry *entries = (dir_entry *)(srcBlkBuffer);
 
-    /* Case where source name is bad */
     bool foundFile = false;
     dir_entry *sourcePtr = nullptr;
     for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
@@ -942,20 +883,24 @@ int FS::mv(std::string sourcepath, std::string destpath)
 
     bool foundDst = false;
 
-    if (PathFlag == false)
+    if (disk.read(dstBlock, dstBlkBuffer) == -1)
     {
+        std::cerr << "Error: failed to read src file in mv()." << std::endl;
+        return -1;
+    }
 
-        for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    dir_entry *dstEntries = (dir_entry *)(dstBlkBuffer);
+
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (strcmp(dstEntries[i].file_name, destpath.c_str()) == 0)
         {
-            if (strcmp(entries[i].file_name, destpath.c_str()) == 0)
-            {
-                // found the file
+            // found the file
 
-                destinationPtr = &entries[i];
+            destinationPtr = &dstEntries[i];
 
-                foundDst = true;
-                break;
-            }
+            foundDst = true;
+            break;
         }
     }
 
@@ -963,8 +908,7 @@ int FS::mv(std::string sourcepath, std::string destpath)
 
     for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
     {
-
-        if (strcmp(entries[i].file_name, destpath.c_str()) == 0 && destinationPtr->type != TYPE_DIR)
+        if (strcmp(dstEntries[i].file_name, destpath.c_str()) == 0 && destinationPtr->type != TYPE_DIR)
         {
             // found the file that destination file already exists
             std::cerr << "Error: in mv(), Destination file already exists" << std::endl;
@@ -972,25 +916,17 @@ int FS::mv(std::string sourcepath, std::string destpath)
         }
     }
 
-    if (!PathFlag && destinationPtr && destinationPtr->type != TYPE_DIR)
+    if (!renameMove && destinationPtr && destinationPtr->type != TYPE_DIR)
     {
         std::cerr << "Error: Destination file already exists in mv()." << std::endl;
         return -1;
     }
 
-    if (!PathFlag && destinationPtr && destinationPtr->type == TYPE_DIR)
+    if (renameMove == false)
     {
 
-        // Case 2
-
-        // Read root block for source entry //Entries is source
-
-        // Read dst block to add source entry
-
-        readFromDst = destinationPtr->first_blk;
-
-        u_int8_t dstBlkBuffer[BLOCK_SIZE]; // Somewhere to store what we read
-        disk.read(readFromDst, dstBlkBuffer);
+        u_int8_t dstBlkBuffer[BLOCK_SIZE];
+        disk.read(dstBlock, dstBlkBuffer);
         dir_entry *dstEntries = (dir_entry *)(dstBlkBuffer);
 
         dir_entry *dstEntryPtr = nullptr;
@@ -1001,9 +937,11 @@ int FS::mv(std::string sourcepath, std::string destpath)
             {
                 // found a spot
                 dstEntryPtr = &dstEntries[i];
+
                 break;
             }
         }
+
         if (dstEntryPtr == nullptr)
         {
             std::cerr << "Error in mv(), when target was DIR there was no room in destination for a new file" << std::endl;
@@ -1026,76 +964,21 @@ int FS::mv(std::string sourcepath, std::string destpath)
 
         // write both changes
 
-        disk.write(readFromDst, dstBlkBuffer);
+        disk.write(dstBlock, dstBlkBuffer);
 
-        // remove old file entry from src then write?
+        // remove old file entry from src then write
         memset(sourcePtr->file_name, 0, sizeof(sourcePtr->file_name));
         sourcePtr->first_blk = 0;
         sourcePtr->size = 0;
         sourcePtr->type = 0;
         sourcePtr->access_rights = READ | WRITE;
 
-        disk.write(readFrom, srcBlkBuffer);
-    }
-
-    else if (PathFlag)
-    {
-        // Case 3: Handle path traversal
-        u_int8_t dstBlkBuffer[BLOCK_SIZE];
-        if (disk.read(current_dir, dstBlkBuffer) == -1)
-        {
-            std::cerr << "Error in mv(): Failed to read destination directory.\n";
-            current_dir = startDir;
-            return -1;
-        }
-
-        dir_entry *dstEntries = reinterpret_cast<dir_entry *>(dstBlkBuffer);
-        dir_entry *freeSpot = nullptr;
-
-        for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
-        {
-            if (dstEntries[i].first_blk == FAT_FREE && dstEntries[i].type != TYPE_DIR)
-            {
-                freeSpot = &dstEntries[i];
-                break;
-            }
-        }
-
-        if (!freeSpot)
-        {
-            std::cerr << "Error in mv(): No space in destination directory.\n";
-            current_dir = startDir;
-            return -1;
-        }
-
-        strncpy(freeSpot->file_name, sourcePtr->file_name, sizeof(freeSpot->file_name) - 1);
-        freeSpot->file_name[sizeof(freeSpot->file_name) - 1] = '\0';
-        freeSpot->first_blk = sourcePtr->first_blk;
-        freeSpot->size = sourcePtr->size;
-        freeSpot->type = sourcePtr->type;
-        freeSpot->access_rights = sourcePtr->access_rights;
-
-        if (disk.write(current_dir, dstBlkBuffer) == -1)
-        {
-            std::cerr << "Error in mv(): Failed to write destination directory.\n";
-            current_dir = startDir;
-            return -1;
-        }
-
-        // Remove old entry
-        memset(sourcePtr, 0, sizeof(dir_entry));
-        if (disk.write(readFrom, srcBlkBuffer) == -1)
-        {
-            std::cerr << "Error in mv(): Failed to write source directory block.\n";
-            current_dir = startDir;
-            return -1;
-        }
+        disk.write(srcBlock, srcBlkBuffer);
     }
 
     else
     {
-
-        // Case 1
+        // Case 1: Rename-Move
 
         std::string dstName = extractFilename(destpath);
 
@@ -1112,15 +995,9 @@ int FS::mv(std::string sourcepath, std::string destpath)
         strncpy(sourcePtr->file_name, charArray, sizeof(sourcePtr->file_name) - 1);
         sourcePtr->file_name[sizeof(sourcePtr->file_name) - 1] = '\0'; // Ensure null-termination
 
-        disk.write(readFrom, srcBlkBuffer);
+        disk.write(current_dir, srcBlkBuffer);
     }
 
-    if (PathFlag)
-    {
-        current_dir = startDir; // Restore to the starting directory after operation
-    }
-
-    std::cout << "FS::mv(" << sourcepath << "," << destpath << ")\n";
     return 0;
 }
 
@@ -1304,8 +1181,6 @@ int FS::append(std::string filepath1, std::string filepath2)
         srcCurrentBlock = this->fat[srcCurrentBlock];
     }
 
-    // dataBuffer = hej heja hejare hejast
-    //  hej heja hejare hejast / blocks = st block
     double temp = (double)srcFile->size / BLOCK_SIZE;
     int nrNeededBlocks = std::ceil(temp);
 
@@ -1316,11 +1191,6 @@ int FS::append(std::string filepath1, std::string filepath2)
         std::cerr << "Error in append(): not enough free blocks" << std::endl;
         return -1;
     }
-
-    // read/Write to update size
-    // u_int8_t aBuffer[BLOCK_SIZE]; // Somewhere to store what we read
-    // disk.read(current_dir, aBuffer);
-    // disk.write(ROOT_BLOCK, aBuffer);
 
     // find last block of dst/file2
     uint16_t dstCurrentBlk = dstFile->first_blk;
@@ -1352,7 +1222,6 @@ int FS::append(std::string filepath1, std::string filepath2)
 
     disk.write(ROOT_BLOCK, blkBuffer);
 
-    std::cout << "FS::append(" << filepath1 << "," << filepath2 << ")\n";
     return 0;
 }
 
@@ -1406,9 +1275,6 @@ int FS::mkdir(std::string dirpath)
     for (size_t i = 0; i < components.size(); ++i)
     {
         const std::string &dirName = components[i];
-
-        // If it's the last component, create the directory
-        // std::cout << "i | compSize " << i << " | " << components.size() << std::endl;
 
         // Edge Case
         if (0 == components.size() - 1)
@@ -1541,7 +1407,6 @@ int FS::mkdir(std::string dirpath)
 
     current_dir = startDir;
 
-    // std::cout << "FS::mkdir(" << dirpath << ")\n";
     return 0;
 }
 
@@ -1594,7 +1459,7 @@ int FS::cd(std::string dirpath)
 
         if (strcmp(entries[i].file_name, dirpath.c_str()) == 0) //(entries[i].file_name == dirpath.c_str())
         {
-            // temp_current_dir = entries[i].first_blk;
+
             foundEntry = true;
             paramEntry = &entries[i];
             break;
@@ -1603,7 +1468,7 @@ int FS::cd(std::string dirpath)
 
     if (foundEntry == false)
     {
-        // std::cerr << "Error in cd() couldn't find directory" << std::endl;
+
         return -1;
     }
 
@@ -1774,6 +1639,169 @@ int FS::chmod(std::string accessrights, std::string filepath)
         std::cerr << "error in chmod(), on write " << std::endl;
     };
 
-    std::cout << "FS::chmod(" << accessrights << "," << filepath << ")\n";
     return 0;
+}
+
+/* More helper funtions*/
+
+int FS::traversal(std::string absolutePath)
+
+{
+
+    auto startDir = current_dir;
+
+    std::vector<std::string> components = parsePath(absolutePath);
+
+    while (current_dir != 0)
+    {
+        if (cd("..") == -1)
+        {
+            std::cerr << "Error: Could not navigate to the root directory." << std::endl;
+            return -1;
+        }
+    }
+
+    for (size_t i = 0; i < components.size(); ++i) // in order to land one over target dir
+    {
+
+        if (cd(components[i]) == -1)
+        {
+            std::cerr << "error in cp()" << std::endl;
+        }
+    }
+
+    absolutePath = extractLastPart(absolutePath);
+
+    // Since files are in the dir but dir entries is found in parent
+    cd(absolutePath);
+
+    auto endOfTraversalBlock = current_dir;
+
+    current_dir = startDir;
+    return endOfTraversalBlock;
+}
+
+int FS::dotHelper(std::string path)
+{
+    // will return the block number for .. or -1 if the param wasnt ..
+
+    // handle case where we want to copy into .. i.e we have to back up two levels
+
+    auto startDir = current_dir;
+
+    cd("..");
+
+    auto block = current_dir;
+    current_dir = startDir;
+
+    return block;
+}
+
+void FS::entryPointer(dir_entry *&ptr, uint16_t block, std::string compareTo)
+{
+    // finds and changes the pointer to the entry inorder to get a pointer to the attributes, if nullptr on return it was not found
+    //  args pointer by refrence , block and string to compare to
+
+    u_int8_t BlkBuffer[BLOCK_SIZE];
+    ptr = nullptr;
+
+    if (compareTo == "..")
+    {
+        // Assume dotHandler has put us in .. dir
+
+        dir_entry *entries = (dir_entry *)(BlkBuffer);
+        disk.read(block, BlkBuffer);
+
+        auto compareToBlock = block;
+
+        // go back one step (cd)
+        block = entries[0].first_blk;
+        disk.read(block, BlkBuffer);
+
+        // Search for the dirName using CompareToBlock
+
+        for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+        {
+            if (entries[i].first_blk != FAT_FREE && entries->first_blk == compareToBlock)
+            {
+
+                ptr = &entries[i];
+            }
+        }
+    }
+
+    // do usual search based on File name
+    dir_entry *entries = (dir_entry *)(BlkBuffer);
+    disk.read(block, BlkBuffer);
+
+    if (disk.read(block, BlkBuffer) == -1)
+    {
+        std::cerr << "Error: failed to read block in entryPointer()." << std::endl;
+    }
+
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+
+        if (entries[i].first_blk != FAT_FREE && strcmp(entries[i].file_name, compareTo.c_str()) == 0)
+        {
+
+            ptr = &entries[i];
+        }
+    }
+}
+
+std::pair<uint16_t, uint16_t> FS::absolutePathHelper(std::string sourcepath, std::string destpath)
+{
+    bool dstIsAbsolute = false;
+    bool srcIsAbsolute = false;
+    uint16_t dstBlock = current_dir;
+    uint16_t srcBlock = current_dir;
+
+    // Step 1 check if desintation is absolute'
+    if (destpath.find('/') != std::string::npos || destpath[0] == '/')
+    {
+        dstIsAbsolute = true;
+    }
+
+    // Step 2 check if source is absolute
+    if (sourcepath.find('/') != std::string::npos)
+    {
+
+        srcIsAbsolute = true;
+    }
+
+    // Step 3 handle based on flags
+
+    // Case 1 both are absolute
+    if (dstIsAbsolute == true && srcIsAbsolute == true)
+    {
+
+        // Traverse down both paths
+        dstBlock = traversal(destpath);
+        srcBlock = traversal(sourcepath);
+    }
+
+    // Case 2 src is absolute
+    else if (srcIsAbsolute == true)
+    {
+
+        srcBlock = traversal(sourcepath);
+    }
+
+    // Case 3 dst is absolute
+    else if (dstIsAbsolute == true)
+    {
+
+        dstBlock = traversal(destpath);
+    }
+
+    // Case 4 none of them are absolute
+    else
+    {
+        // do nothing since none were absolute
+    }
+
+    // Step 4 return the block number for src and dst block
+
+    return std::make_pair(srcBlock, dstBlock);
 }
